@@ -143,6 +143,19 @@ final class WindowCatalog {
         (w.title ?? "").lowercased().contains("layerprobe")
     }
 
+    /// The MacBook's own screen in points, as the last look that saw it had it: the size of Sill's Retina
+    /// display with the lid closed (HeadlessDesktopPolicy). Kept in the preferences, so a relaunch with the
+    /// lid already closed still knows it.
+    static var lastBuiltIn: (widthPt: Int, heightPt: Int)? {
+        guard let a = UserDefaults.standard.array(forKey: builtInKey) as? [Int], a.count == 2 else { return nil }
+        return (a[0], a[1])
+    }
+    private static let builtInKey = "lastBuiltInDisplayPoints"
+    private static func rememberBuiltIn(widthPt: Int, heightPt: Int) {
+        guard widthPt > 0, heightPt > 0, lastBuiltIn.map({ $0 == (widthPt, heightPt) }) != true else { return }
+        UserDefaults.standard.set([widthPt, heightPt], forKey: builtInKey)
+    }
+
     /// Window list and thumbnails, while a client is connected.
     static let pollInterval: Duration = .seconds(2)
     /// A window whose `WindowInfo` (title, app, size) has not changed since its last thumbnail,
@@ -310,7 +323,10 @@ final class WindowCatalog {
         appliedSeq = seq
         lookedAt = .now
         ownApplication = content.applications.first { $0.processID == Self.ownPID }
-        lookedDisplays = content.displays
+        // A real display first, else Sill's (the lid closed, #200), else macOS's stand-in (HeadlessDesktopPolicy.pool):
+        // the Desktop's displays and the one it streams are chosen among those (DesktopDisplays, #173).
+        lookedDisplays = HeadlessDesktopPolicy.pool(content.displays) { StreamCoordinator.displayKind($0.displayID) }
+        if let b = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) { Self.rememberBuiltIn(widthPt: b.width, heightPt: b.height) }
         resolveDesktopDisplay()
         var visible = content.windows.filter { w in
             guard let app = w.owningApplication, !app.applicationName.isEmpty else { return false }
